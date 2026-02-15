@@ -117,3 +117,4 @@ export type StateEvent =
   | { readonly type: 'team_deleted' }
   | { readonly type: 'cost_threshold'; readonly current: number; readonly budget: number }
   | { readonly type: 'snapshot_written'; readonly path: string }
+  | { readonly type: 'watcher_error'; readonly source: string; readonly message: string }

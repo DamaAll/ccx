@@ -74,16 +74,29 @@ export async function runWatch(options: WatchCommandOptions): Promise<void> {
     })
   }
 
-  const onQuit = async () => {
-    await handle.stop()
+  let shuttingDown = false
+
+  const gracefulShutdown = async () => {
+    if (shuttingDown) {
+      // Double-tap: force exit
+      process.exit(1)
+    }
+    shuttingDown = true
+    try {
+      await handle.stop()
+      console.log(chalk.dim(`\nSaved to: ${handle.snapshotManager.sessionPath}`))
+    } catch {
+      console.error(chalk.dim('\nSnapshot save failed.'))
+    }
+    process.exit(0)
   }
 
-  // SIGINT fallback (ink 通常自己處理，但 plain mode 需要)
-  process.on('SIGINT', async () => {
-    await handle.stop()
-    console.log(chalk.dim(`\nSaved to: ${handle.snapshotManager.sessionPath}`))
-    process.exit(0)
-  })
+  const onQuit = async () => {
+    await gracefulShutdown()
+  }
+
+  process.on('SIGINT', gracefulShutdown)
+  process.on('SIGTERM', gracefulShutdown)
 
   if (options.plain) {
     // ─── Plain text mode ───
@@ -116,9 +129,12 @@ function runPlainMode(handle: WatchHandle): void {
 
   handle.aggregator.on('event', async (event: StateEvent) => {
     if (event.type === 'team_deleted') {
-      console.log(chalk.yellow('\nTeam deleted. Snapshot saved.'))
+      console.log(chalk.yellow(`\nTeam deleted. Snapshot saved to: ${handle.snapshotManager.sessionPath}`))
       await handle.stop()
       process.exit(0)
+    }
+    if (event.type === 'watcher_error') {
+      console.error(chalk.dim(`[watcher] ${event.source}: ${event.message}`))
     }
   })
 }

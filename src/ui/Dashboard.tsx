@@ -41,6 +41,12 @@ export function Dashboard({ aggregator, budget, hardLimit, sessionPath, onQuit }
         return
       }
 
+      // watcher_error 不需要 throttle
+      if (event.type === 'watcher_error') {
+        setState(aggregator.getState())
+        return
+      }
+
       const now = Date.now()
       if (now - lastUpdate < THROTTLE) return
       lastUpdate = now

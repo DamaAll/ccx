@@ -19,7 +19,7 @@ import { tryResolveFromRawLines, batchResolve } from './identity-resolver.js'
 import { discoverSubagents, listAgentFiles, type AgentFileInfo } from './session-discovery.js'
 import { StateAggregator } from './state-aggregator.js'
 import { SnapshotManager } from './snapshot-manager.js'
-import type { FileCursor } from './types.js'
+import type { FileCursor, StateEvent } from './types.js'
 
 export interface WatchOptions {
   readonly teamName: string
@@ -109,6 +109,12 @@ export async function startWatch(options: WatchOptions): Promise<WatchHandle> {
 
   const watchers: FSWatcher[] = []
 
+  const handleWatcherError = (source: string) => (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err)
+    if (onError) onError(err instanceof Error ? err : new Error(message))
+    else aggregator.emit('event', { type: 'watcher_error', source, message } satisfies StateEvent)
+  }
+
   // Watch config.json
   const configWatcher = chokidarWatch(claudePaths.teamConfig(teamName), {
     ignoreInitial: true,
@@ -120,6 +126,7 @@ export async function startWatch(options: WatchOptions): Promise<WatchHandle> {
       if (updated) aggregator.updateTeamConfig(updated)
     } catch { /* ignore */ }
   })
+  configWatcher.on('error', handleWatcherError('config'))
   watchers.push(configWatcher)
 
   // Watch tasks directory
@@ -134,6 +141,7 @@ export async function startWatch(options: WatchOptions): Promise<WatchHandle> {
       aggregator.updateTasks(updated)
     } catch { /* ignore */ }
   })
+  taskWatcher.on('error', handleWatcherError('tasks'))
   watchers.push(taskWatcher)
 
   // Watch inboxes directory
@@ -150,6 +158,7 @@ export async function startWatch(options: WatchOptions): Promise<WatchHandle> {
       }
     } catch { /* ignore */ }
   })
+  inboxWatcher.on('error', handleWatcherError('inboxes'))
   watchers.push(inboxWatcher)
 
   // Watch subagents JSONL
@@ -184,6 +193,7 @@ export async function startWatch(options: WatchOptions): Promise<WatchHandle> {
       } catch { /* ignore */ }
     })
 
+    subagentWatcher.on('error', handleWatcherError('subagents'))
     watchers.push(subagentWatcher)
   }
 
