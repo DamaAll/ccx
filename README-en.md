@@ -84,6 +84,7 @@ TASKS
 | `--notify` | Send OS notification on budget alerts |
 | `--stuck-timeout <s>` | Seconds before marking agent as stuck (default: 180) |
 | `--plain` | Text-only mode (no ink UI) |
+| `--all` | Show all agents and tasks (no filtering) |
 
 **Features:**
 

@@ -84,6 +84,7 @@ TASKS
 | `--notify` | 預算警告時送 OS 通知 |
 | `--stuck-timeout <s>` | 標記 agent 為 stuck 的秒數（預設 180） |
 | `--plain` | 純文字模式（無 ink UI） |
+| `--all` | 顯示所有 agent 和 task（不過濾） |
 
 **Features:**
 

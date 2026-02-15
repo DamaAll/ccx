@@ -43,6 +43,7 @@ program
   .option('--kill', 'Hard limit: send C-c to agents when budget exceeded')
   .option('--notify', 'Send OS notification on budget alerts')
   .option('--plain', 'Accessible text-only mode (no colors)')
+  .option('--all', 'Show all agents and tasks (no filtering)')
   .action(async (team: string | undefined, opts) => {
     if (opts.plain || process.env.NO_COLOR || process.env.TERM === 'dumb') {
       process.env.NO_COLOR = '1'
@@ -55,6 +56,7 @@ program
       plain: opts.plain,
       kill: opts.kill,
       notify: opts.notify,
+      all: opts.all,
     })
   })
 

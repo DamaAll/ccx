@@ -1,22 +1,48 @@
 /**
  * TaskPanel：顯示 task 列表 + dependency + elapsed time
+ *
+ * 預設最多顯示 15 筆 task（優先顯示 in_progress + pending），
+ * showAll=true 時顯示全部。
  */
-import React, { memo } from 'react'
+import React, { memo, useMemo } from 'react'
 import { Box, Text } from 'ink'
 import type { TaskData } from '../core/types.js'
 
+const MAX_TASKS = 15
+
 interface TaskPanelProps {
   readonly tasks: readonly TaskData[]
+  readonly showAll?: boolean
 }
 
-export const TaskPanel = memo(function TaskPanel({ tasks }: TaskPanelProps) {
+export const TaskPanel = memo(function TaskPanel({ tasks, showAll }: TaskPanelProps) {
+  const { visible, hiddenCount } = useMemo(() => {
+    if (showAll || tasks.length <= MAX_TASKS) {
+      return { visible: tasks, hiddenCount: 0 }
+    }
+
+    // 優先顯示 in_progress → pending → completed
+    const prioritized = [...tasks].sort((a, b) => {
+      const order: Record<string, number> = { in_progress: 0, pending: 1, completed: 2, deleted: 3 }
+      return (order[a.status] ?? 4) - (order[b.status] ?? 4)
+    })
+
+    return {
+      visible: prioritized.slice(0, MAX_TASKS),
+      hiddenCount: prioritized.length - MAX_TASKS,
+    }
+  }, [tasks, showAll])
+
   return (
     <Box flexDirection="column">
       <Text bold>TASKS</Text>
-      {tasks.length === 0 ? (
+      {visible.length === 0 ? (
         <Text dimColor>  (no tasks)</Text>
       ) : (
-        tasks.map(task => <TaskRow key={task.id} task={task} />)
+        visible.map(task => <TaskRow key={task.id} task={task} />)
+      )}
+      {hiddenCount > 0 && (
+        <Text dimColor>  ... and {hiddenCount} more task{hiddenCount > 1 ? 's' : ''} (completed)</Text>
       )}
     </Box>
   )

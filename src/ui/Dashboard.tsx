@@ -20,9 +20,10 @@ interface DashboardProps {
   readonly budget: number | null
   readonly hardLimit: boolean
   readonly sessionPath: string
+  readonly showAll?: boolean
 }
 
-export function Dashboard({ aggregator, budget, hardLimit, sessionPath }: DashboardProps) {
+export function Dashboard({ aggregator, budget, hardLimit, sessionPath, showAll }: DashboardProps) {
   const { exit } = useApp()
   const [state, setState] = useState<TeamState>(aggregator.getState())
   const [teamDeleted, setTeamDeleted] = useState(false)
@@ -101,12 +102,13 @@ export function Dashboard({ aggregator, budget, hardLimit, sessionPath }: Dashbo
         agents={state.agents}
         totalCost={state.totalCost}
         totalTokens={totalTokenCount(state.totalTokens)}
+        showAll={showAll}
       />
 
       <Text> </Text>
 
       {/* Tasks */}
-      <TaskPanel tasks={state.tasks} />
+      <TaskPanel tasks={state.tasks} showAll={showAll} />
 
       <Text> </Text>
 

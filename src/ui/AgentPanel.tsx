@@ -1,18 +1,62 @@
 /**
  * AgentPanel：顯示 agent 列表 + heartbeat + last-activity
+ *
+ * 預設行為：隱藏 idle >1h / done / shutdown 的 agent，
+ * 按 cost 降序排列，最多顯示 20 筆，其餘折疊為 summary。
+ * showAll=true 時顯示所有 agent。
  */
-import React, { memo } from 'react'
+import React, { memo, useMemo } from 'react'
 import { Box, Text } from 'ink'
 import type { AgentState } from '../core/types.js'
-import { formatCost, formatTokens, totalTokenCount } from '../core/pricing.js'
+import { formatCost, formatTokens, totalTokenCount, formatTimeSince } from '../core/pricing.js'
+
+const MAX_VISIBLE = 20
+const IDLE_HIDE_MS = 60 * 60 * 1000 // 1 hour
 
 interface AgentPanelProps {
   readonly agents: readonly AgentState[]
   readonly totalCost: number
   readonly totalTokens: number
+  readonly showAll?: boolean
 }
 
-export const AgentPanel = memo(function AgentPanel({ agents, totalCost, totalTokens }: AgentPanelProps) {
+export const AgentPanel = memo(function AgentPanel({ agents, totalCost, totalTokens, showAll }: AgentPanelProps) {
+  const { visible, hiddenCount, hiddenCost } = useMemo(() => {
+    if (showAll || agents.length <= MAX_VISIBLE) {
+      return { visible: agents, hiddenCount: 0, hiddenCost: 0 }
+    }
+
+    const now = Date.now()
+    const active: AgentState[] = []
+    let hCount = 0
+    let hCost = 0
+
+    for (const a of agents) {
+      const isInactive = a.status === 'done' || a.status === 'shutdown'
+      const isLongIdle = a.status === 'idle' && a.lastActivityAt > 0 && (now - a.lastActivityAt) > IDLE_HIDE_MS
+
+      if (isInactive || isLongIdle) {
+        hCount++
+        hCost += a.cost
+      } else {
+        active.push(a)
+      }
+    }
+
+    // 如果過濾後仍超過 MAX_VISIBLE，按 cost 降序取前 N
+    if (active.length > MAX_VISIBLE) {
+      const sorted = [...active].sort((a, b) => b.cost - a.cost)
+      const extra = sorted.slice(MAX_VISIBLE)
+      for (const a of extra) {
+        hCount++
+        hCost += a.cost
+      }
+      return { visible: sorted.slice(0, MAX_VISIBLE), hiddenCount: hCount, hiddenCost: hCost }
+    }
+
+    return { visible: active, hiddenCount: hCount, hiddenCost: hCost }
+  }, [agents, showAll])
+
   return (
     <Box flexDirection="column">
       <Box>
@@ -23,16 +67,22 @@ export const AgentPanel = memo(function AgentPanel({ agents, totalCost, totalTok
         <Text dimColor>COST</Text>
       </Box>
 
-      {agents.length === 0 ? (
+      {visible.length === 0 && hiddenCount === 0 ? (
         <Text dimColor>  (no agents detected yet)</Text>
       ) : (
-        agents.map((agent, i) => (
+        visible.map((agent, i) => (
           <AgentRow
             key={agent.agentId}
             agent={agent}
-            isLast={i === agents.length - 1}
+            isLast={i === visible.length - 1 && hiddenCount === 0}
           />
         ))
+      )}
+
+      {hiddenCount > 0 && (
+        <Box>
+          <Text dimColor>└─ ... and {hiddenCount} more agent{hiddenCount > 1 ? 's' : ''} ({formatCost(hiddenCost)})</Text>
+        </Box>
       )}
 
       <Box>
@@ -103,11 +153,3 @@ function truncate(str: string, maxLen: number): string {
   return str.slice(0, maxLen - 3) + '...'
 }
 
-function formatTimeSince(timestamp: number): string {
-  const ms = Date.now() - timestamp
-  const secs = Math.floor(ms / 1000)
-  if (secs < 60) return `${secs}s`
-  const mins = Math.floor(secs / 60)
-  if (mins < 60) return `${mins}m${secs % 60}s`
-  return `${Math.floor(mins / 60)}h${mins % 60}m`
-}

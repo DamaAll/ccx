@@ -12,7 +12,7 @@ import { Dashboard } from '../ui/Dashboard.js'
 import { sendOsNotification } from '../guard/soft-limit.js'
 import { killAllMembers } from '../guard/hard-limit.js'
 import { formatCost, formatTokens, totalTokenCount, formatDuration, formatTimeSince } from '../core/pricing.js'
-import type { TeamState, StateEvent } from '../core/types.js'
+import type { TeamState, StateEvent, TaskData } from '../core/types.js'
 
 export interface WatchCommandOptions {
   readonly team?: string
@@ -21,6 +21,7 @@ export interface WatchCommandOptions {
   readonly plain?: boolean
   readonly kill?: boolean
   readonly notify?: boolean
+  readonly all?: boolean
 }
 
 export async function runWatch(options: WatchCommandOptions): Promise<void> {
@@ -91,7 +92,7 @@ export async function runWatch(options: WatchCommandOptions): Promise<void> {
     process.on('SIGINT', gracefulShutdown)
     process.on('SIGTERM', gracefulShutdown)
 
-    runPlainMode(handle)
+    runPlainMode(handle, options.all)
   } else {
     // ─── ink mode ───
     // 需要 TTY 支援 raw mode，否則 fallback 到 plain mode
@@ -111,7 +112,7 @@ export async function runWatch(options: WatchCommandOptions): Promise<void> {
       }
       process.on('SIGINT', gracefulShutdown)
       process.on('SIGTERM', gracefulShutdown)
-      runPlainMode(handle)
+      runPlainMode(handle, options.all)
       return
     }
 
@@ -124,6 +125,7 @@ export async function runWatch(options: WatchCommandOptions): Promise<void> {
         budget: options.budget ?? null,
         hardLimit: options.kill ?? false,
         sessionPath: handle.snapshotManager.sessionPath,
+        showAll: options.all ?? false,
       })
     )
 
@@ -148,11 +150,11 @@ export async function runWatch(options: WatchCommandOptions): Promise<void> {
 
 // ─── Plain text mode (Day 1 fallback) ───
 
-function runPlainMode(handle: WatchHandle): void {
+function runPlainMode(handle: WatchHandle, showAll?: boolean): void {
   const renderPlain = () => {
     const state = handle.aggregator.getState()
     process.stdout.write('\x1B[2J\x1B[H')
-    process.stdout.write(formatPlainDashboard(state))
+    process.stdout.write(formatPlainDashboard(state, showAll))
   }
 
   renderPlain()
@@ -170,7 +172,11 @@ function runPlainMode(handle: WatchHandle): void {
   })
 }
 
-function formatPlainDashboard(state: TeamState): string {
+const PLAIN_MAX_AGENTS = 20
+const PLAIN_MAX_TASKS = 15
+const PLAIN_IDLE_HIDE_MS = 60 * 60 * 1000
+
+function formatPlainDashboard(state: TeamState, showAll?: boolean): string {
   const lines: string[] = []
   const elapsed = formatDuration(state.elapsedMs)
 
@@ -178,9 +184,43 @@ function formatPlainDashboard(state: TeamState): string {
   lines.push('─'.repeat(72))
   lines.push(`${'AGENTS'.padEnd(30)}${'STATUS'.padEnd(12)}${'ACTIVE'.padEnd(10)}${'TOKENS'.padEnd(10)}COST`)
 
-  for (let i = 0; i < state.agents.length; i++) {
-    const a = state.agents[i]
-    const prefix = i === state.agents.length - 1 ? '└─' : '├─'
+  // 過濾 agent
+  let visibleAgents = state.agents
+  let hiddenAgentCount = 0
+  let hiddenAgentCost = 0
+
+  if (!showAll && state.agents.length > PLAIN_MAX_AGENTS) {
+    const now = Date.now()
+    const active: typeof state.agents[number][] = []
+
+    for (const a of state.agents) {
+      const isInactive = a.status === 'done' || a.status === 'shutdown'
+      const isLongIdle = a.status === 'idle' && a.lastActivityAt > 0 && (now - a.lastActivityAt) > PLAIN_IDLE_HIDE_MS
+
+      if (isInactive || isLongIdle) {
+        hiddenAgentCount++
+        hiddenAgentCost += a.cost
+      } else {
+        active.push(a)
+      }
+    }
+
+    if (active.length > PLAIN_MAX_AGENTS) {
+      const sorted = [...active].sort((a, b) => b.cost - a.cost)
+      for (const a of sorted.slice(PLAIN_MAX_AGENTS)) {
+        hiddenAgentCount++
+        hiddenAgentCost += a.cost
+      }
+      visibleAgents = sorted.slice(0, PLAIN_MAX_AGENTS)
+    } else {
+      visibleAgents = active
+    }
+  }
+
+  for (let i = 0; i < visibleAgents.length; i++) {
+    const a = visibleAgents[i]
+    const isLast = i === visibleAgents.length - 1 && hiddenAgentCount === 0
+    const prefix = isLast ? '└─' : '├─'
     const name = `${a.name} (${a.model})`.slice(0, 26)
     const active = a.lastActivityAt > 0
       ? formatTimeSince(a.lastActivityAt) : '──'
@@ -191,13 +231,34 @@ function formatPlainDashboard(state: TeamState): string {
     )
   }
 
+  if (hiddenAgentCount > 0) {
+    lines.push(`└─ ... and ${hiddenAgentCount} more agent${hiddenAgentCount > 1 ? 's' : ''} (${formatCost(hiddenAgentCost)})`)
+  }
+
   lines.push(`${''.padEnd(30)}${'TOTAL'.padEnd(12)}${''.padEnd(10)}${formatTokens(totalTokenCount(state.totalTokens)).padEnd(10)}${formatCost(state.totalCost)}`)
   lines.push('')
   lines.push('TASKS')
 
-  for (const t of state.tasks) {
+  // 過濾 tasks
+  let visibleTasks: readonly TaskData[] = state.tasks
+  let hiddenTaskCount = 0
+
+  if (!showAll && state.tasks.length > PLAIN_MAX_TASKS) {
+    const sorted = [...state.tasks].sort((a, b) => {
+      const order: Record<string, number> = { in_progress: 0, pending: 1, completed: 2, deleted: 3 }
+      return (order[a.status] ?? 4) - (order[b.status] ?? 4)
+    })
+    visibleTasks = sorted.slice(0, PLAIN_MAX_TASKS)
+    hiddenTaskCount = sorted.length - PLAIN_MAX_TASKS
+  }
+
+  for (const t of visibleTasks) {
     const status = t.status === 'in_progress' ? '[working]' : t.status === 'completed' ? '[done]' : `[${t.status}]`
     lines.push(`#${t.id.padEnd(5)} ${status.padEnd(12)} ${t.subject.slice(0, 30).padEnd(32)} ${t.owner || '──'}`)
+  }
+
+  if (hiddenTaskCount > 0) {
+    lines.push(`  ... and ${hiddenTaskCount} more task${hiddenTaskCount > 1 ? 's' : ''} (completed)`)
   }
 
   if (state.alerts.length > 0) {
