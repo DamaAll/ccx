@@ -5,6 +5,7 @@
 import { Command } from 'commander'
 import { runWatch } from './commands/watch.js'
 import { runReport } from './commands/report.js'
+import { runReuse } from './commands/reuse.js'
 import { listTeamNames } from './core/team-reader.js'
 import { listSessions } from './core/snapshot-reader.js'
 
@@ -19,8 +20,22 @@ program
 program
   .command('watch [team]')
   .description('Live dashboard for an active Agent Team')
-  .option('--budget <usd>', 'Cost alert threshold in USD', parseFloat)
-  .option('--stuck-timeout <seconds>', 'Seconds before marking agent as stuck (default: 180)', parseInt)
+  .option('--budget <usd>', 'Cost alert threshold in USD', (v) => {
+    const n = parseFloat(v)
+    if (Number.isNaN(n) || n <= 0) {
+      console.error(`Invalid --budget value: "${v}". Must be a positive number.`)
+      process.exit(1)
+    }
+    return n
+  })
+  .option('--stuck-timeout <seconds>', 'Seconds before marking agent as stuck (default: 180)', (v) => {
+    const n = parseInt(v, 10)
+    if (Number.isNaN(n) || n <= 0) {
+      console.error(`Invalid --stuck-timeout value: "${v}". Must be a positive integer.`)
+      process.exit(1)
+    }
+    return n
+  })
   .option('--kill', 'Hard limit: send C-c to agents when budget exceeded')
   .option('--notify', 'Send OS notification on budget alerts')
   .option('--plain', 'Accessible text-only mode (no colors)')
@@ -52,6 +67,20 @@ program
       md: opts.md,
       json: opts.json,
       save: opts.save,
+    })
+  })
+
+// ─── reuse ───
+program
+  .command('reuse [target]')
+  .description('Extract team topology from a saved session for reuse')
+  .option('--prompt', 'Output only the reuse prompt (no overview)')
+  .option('--json', 'Output as JSON')
+  .action(async (target: string | undefined, opts) => {
+    await runReuse({
+      target,
+      prompt: opts.prompt,
+      json: opts.json,
     })
   })
 
@@ -91,26 +120,9 @@ program
     }
   })
 
-// ─── Default: help ───
-program
-  .action(() => {
-    console.log(`
-ccx — Agent Teams control plane for Claude Code
-
-Quick start:
-  ccx watch              Monitor the active team
-  ccx watch --budget 5   Set a $5 cost alert
-  ccx report             Post-mortem report
-  ccx ls                 List teams and sessions
-
-Commands:
-  watch [team]           Live dashboard
-  report [target]        Report from saved session or live team
-  ls                     List teams and sessions
-  reuse <session>        Reuse team topology (Day 4)
-
-Run "ccx <command> --help" for details.
-`)
-  })
+// ─── No subcommand → show help ───
+program.action(() => {
+  program.help()
+})
 
 program.parse()
