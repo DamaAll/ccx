@@ -4,6 +4,8 @@
 
 ccx 是一個唯讀的 CLI 觀測工具，用於即時監控 Claude Code Agent Teams 的運行狀態、成本追蹤、事後報告，以及團隊拓撲重用。
 
+> [English README](README-en.md)
+
 ---
 
 ## Why
