@@ -2,7 +2,7 @@
  * Markdown report formatter
  */
 import type { SessionSnapshot } from '../core/types.js'
-import { formatCost, formatTokens, totalTokenCount } from '../core/pricing.js'
+import { formatCost, formatTokens, totalTokenCount, formatDuration } from '../core/pricing.js'
 
 export function formatMarkdownReport(snapshot: SessionSnapshot): string {
   const lines: string[] = []
@@ -69,12 +69,3 @@ export function formatMarkdownReport(snapshot: SessionSnapshot): string {
   return lines.join('\n')
 }
 
-function formatDuration(ms: number): string {
-  const s = Math.floor(ms / 1000)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
-  if (h > 0) return `${h}h ${m}m ${sec}s`
-  if (m > 0) return `${m}m ${sec}s`
-  return `${sec}s`
-}

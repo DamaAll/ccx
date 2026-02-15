@@ -4,11 +4,11 @@
  * 200ms render throttle 由 ink 自身處理（React reconciliation）
  * 這裡只負責 state → UI 映射
  */
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
 import type { StateAggregator } from '../core/state-aggregator.js'
 import type { TeamState, StateEvent } from '../core/types.js'
-import { formatCost, totalTokenCount } from '../core/pricing.js'
+import { formatCost, totalTokenCount, formatDuration } from '../core/pricing.js'
 import { AgentPanel } from './AgentPanel.js'
 import { TaskPanel } from './TaskPanel.js'
 import { CostBar } from './CostBar.js'
@@ -20,10 +20,9 @@ interface DashboardProps {
   readonly budget: number | null
   readonly hardLimit: boolean
   readonly sessionPath: string
-  readonly onQuit: () => Promise<void>
 }
 
-export function Dashboard({ aggregator, budget, hardLimit, sessionPath, onQuit }: DashboardProps) {
+export function Dashboard({ aggregator, budget, hardLimit, sessionPath }: DashboardProps) {
   const { exit } = useApp()
   const [state, setState] = useState<TeamState>(aggregator.getState())
   const [teamDeleted, setTeamDeleted] = useState(false)
@@ -76,14 +75,14 @@ export function Dashboard({ aggregator, budget, hardLimit, sessionPath, onQuit }
     }
   }, [state.tasks, isCompleted])
 
-  // 鍵盤
-  useInput(useCallback((input: string, key: { escape?: boolean }) => {
+  // 鍵盤：q 或 Escape → 通知 ink 退出
+  useInput((input: string, key: { escape?: boolean }) => {
     if (input === 'q' || key.escape) {
-      onQuit().then(() => exit())
+      exit()
     }
-  }, [onQuit, exit]))
+  })
 
-  const elapsed = formatElapsed(state.elapsedMs)
+  const elapsed = formatDuration(state.elapsedMs)
 
   return (
     <Box flexDirection="column">
@@ -138,14 +137,4 @@ export function Dashboard({ aggregator, budget, hardLimit, sessionPath, onQuit }
       </Box>
     </Box>
   )
-}
-
-function formatElapsed(ms: number): string {
-  const totalSec = Math.floor(ms / 1000)
-  const hours = Math.floor(totalSec / 3600)
-  const mins = Math.floor((totalSec % 3600) / 60)
-  const secs = totalSec % 60
-  if (hours > 0) return `${hours}h ${mins}m ${secs}s`
-  if (mins > 0) return `${mins}m ${secs}s`
-  return `${secs}s`
 }

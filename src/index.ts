@@ -8,6 +8,10 @@ import { runReport } from './commands/report.js'
 import { runReuse } from './commands/reuse.js'
 import { listTeamNames } from './core/team-reader.js'
 import { listSessions } from './core/snapshot-reader.js'
+import { formatCost, formatDuration } from './core/pricing.js'
+import { ccxPaths } from './core/paths.js'
+import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
 
 const program = new Command()
 
@@ -112,12 +116,64 @@ program
     if (sessions.length > 0) {
       if (teams.length > 0) console.log('')
       console.log(`Saved sessions (${sessions.length}):`)
+      console.log(`  ${'TEAM'.padEnd(22)} ${'AGENTS'.padEnd(8)} ${'COST'.padEnd(10)} ${'DURATION'.padEnd(10)} ${'STATUS'.padEnd(12)} DATE`)
       for (const s of sessions) {
         const date = new Date(s.lastUpdatedAt).toLocaleDateString()
+        const elapsed = formatDuration(s.lastUpdatedAt - s.startedAt)
         const status = s.finalized ? 'finalized' : 'active'
-        console.log(`  ${s.name.padEnd(30)} ${s.teamName.padEnd(20)} ${date.padEnd(12)} ${status}`)
+        const cost = formatCost(s.totalCost)
+        console.log(`  ${s.teamName.padEnd(22)} ${String(s.agentCount).padEnd(8)} ${cost.padEnd(10)} ${elapsed.padEnd(10)} ${status.padEnd(12)} ${date}`)
       }
     }
+  })
+
+// ─── clean ───
+program
+  .command('clean')
+  .description('Remove old saved sessions')
+  .option('--keep <n>', 'Number of recent sessions to keep (default: 5)', (v) => {
+    const n = parseInt(v, 10)
+    if (Number.isNaN(n) || n < 0) {
+      console.error(`Invalid --keep value: "${v}". Must be a non-negative integer.`)
+      process.exit(1)
+    }
+    return n
+  })
+  .option('--dry-run', 'Show what would be deleted without actually deleting')
+  .action(async (opts) => {
+    const keep = opts.keep ?? 5
+    const sessions = await listSessions()
+
+    if (sessions.length <= keep) {
+      console.log(`${sessions.length} session(s) found, keeping all (threshold: ${keep}).`)
+      return
+    }
+
+    const toKeep = sessions.slice(0, keep)
+    const toDelete = sessions.slice(keep)
+
+    if (opts.dryRun) {
+      console.log(`Would keep ${toKeep.length} session(s):`)
+      for (const s of toKeep) {
+        console.log(`  [keep]   ${s.teamName.padEnd(22)} ${formatCost(s.totalCost).padEnd(10)} ${new Date(s.lastUpdatedAt).toLocaleDateString()}`)
+      }
+      console.log(`Would delete ${toDelete.length} session(s):`)
+      for (const s of toDelete) {
+        console.log(`  [delete] ${s.teamName.padEnd(22)} ${formatCost(s.totalCost).padEnd(10)} ${new Date(s.lastUpdatedAt).toLocaleDateString()}`)
+      }
+      return
+    }
+
+    let deleted = 0
+    for (const s of toDelete) {
+      try {
+        await rm(join(ccxPaths.sessions, s.name), { recursive: true })
+        deleted++
+      } catch {
+        console.error(`  Failed to delete: ${s.name}`)
+      }
+    }
+    console.log(`Deleted ${deleted} old session(s), kept ${toKeep.length} most recent.`)
   })
 
 // ─── No subcommand → show help ───
@@ -125,4 +181,4 @@ program.action(() => {
   program.help()
 })
 
-program.parse()
+program.parseAsync()

@@ -11,7 +11,7 @@ import { listTeamNames } from '../core/team-reader.js'
 import { Dashboard } from '../ui/Dashboard.js'
 import { sendOsNotification } from '../guard/soft-limit.js'
 import { killAllMembers } from '../guard/hard-limit.js'
-import { formatCost, formatTokens, totalTokenCount } from '../core/pricing.js'
+import { formatCost, formatTokens, totalTokenCount, formatDuration, formatTimeSince } from '../core/pricing.js'
 import type { TeamState, StateEvent } from '../core/types.js'
 
 export interface WatchCommandOptions {
@@ -74,44 +74,75 @@ export async function runWatch(options: WatchCommandOptions): Promise<void> {
     })
   }
 
-  let shuttingDown = false
-
-  const gracefulShutdown = async () => {
-    if (shuttingDown) {
-      // Double-tap: force exit
-      process.exit(1)
-    }
-    shuttingDown = true
-    try {
-      await handle.stop()
-      console.log(chalk.dim(`\nSaved to: ${handle.snapshotManager.sessionPath}`))
-    } catch {
-      console.error(chalk.dim('\nSnapshot save failed.'))
-    }
-    process.exit(0)
-  }
-
-  const onQuit = async () => {
-    await gracefulShutdown()
-  }
-
-  process.on('SIGINT', gracefulShutdown)
-  process.on('SIGTERM', gracefulShutdown)
-
   if (options.plain) {
     // ─── Plain text mode ───
+    let shuttingDown = false
+    const gracefulShutdown = async () => {
+      if (shuttingDown) { process.exit(1) }
+      shuttingDown = true
+      try {
+        await handle.stop()
+        console.log(chalk.dim(`\nSaved to: ${handle.snapshotManager.sessionPath}`))
+      } catch {
+        console.error(chalk.dim('\nSnapshot save failed.'))
+      }
+      process.exit(0)
+    }
+    process.on('SIGINT', gracefulShutdown)
+    process.on('SIGTERM', gracefulShutdown)
+
     runPlainMode(handle)
   } else {
     // ─── ink mode ───
-    render(
+    // 需要 TTY 支援 raw mode，否則 fallback 到 plain mode
+    if (!process.stdin.isTTY) {
+      console.error(chalk.yellow('stdin is not a TTY — falling back to --plain mode.'))
+      let shuttingDown = false
+      const gracefulShutdown = async () => {
+        if (shuttingDown) { process.exit(1) }
+        shuttingDown = true
+        try {
+          await handle.stop()
+          console.log(chalk.dim(`\nSaved to: ${handle.snapshotManager.sessionPath}`))
+        } catch {
+          console.error(chalk.dim('\nSnapshot save failed.'))
+        }
+        process.exit(0)
+      }
+      process.on('SIGINT', gracefulShutdown)
+      process.on('SIGTERM', gracefulShutdown)
+      runPlainMode(handle)
+      return
+    }
+
+    // ink 在 raw mode 下攔截 Ctrl+C（作為 \x03 byte），自動呼叫 exit()
+    // 按 q / Escape 也會在 Dashboard 內呼叫 exit()
+    // waitUntilExit() 在 ink 退出後 resolve → 清理 → process.exit
+    const instance = render(
       React.createElement(Dashboard, {
         aggregator: handle.aggregator,
         budget: options.budget ?? null,
         hardLimit: options.kill ?? false,
         sessionPath: handle.snapshotManager.sessionPath,
-        onQuit,
       })
     )
+
+    // SIGTERM（kill 指令）→ 觸發 ink unmount
+    process.on('SIGTERM', () => instance.unmount())
+
+    await instance.waitUntilExit()
+
+    // ink 已釋放 raw mode，Ctrl+C 恢復為 SIGINT
+    // 如果清理過程中使用者按 Ctrl+C → force exit
+    process.on('SIGINT', () => process.exit(1))
+
+    try {
+      await handle.stop()
+      console.log(chalk.dim(`Saved to: ${handle.snapshotManager.sessionPath}`))
+    } catch {
+      console.error(chalk.dim('Snapshot save failed.'))
+    }
+    process.exit(0)
   }
 }
 
@@ -141,7 +172,7 @@ function runPlainMode(handle: WatchHandle): void {
 
 function formatPlainDashboard(state: TeamState): string {
   const lines: string[] = []
-  const elapsed = formatElapsedPlain(state.elapsedMs)
+  const elapsed = formatDuration(state.elapsedMs)
 
   lines.push(`ccx watch: ${state.teamName} (${elapsed})    Cost: ${formatCost(state.totalCost)}`)
   lines.push('─'.repeat(72))
@@ -152,7 +183,7 @@ function formatPlainDashboard(state: TeamState): string {
     const prefix = i === state.agents.length - 1 ? '└─' : '├─'
     const name = `${a.name} (${a.model})`.slice(0, 26)
     const active = a.lastActivityAt > 0
-      ? formatTimeSincePlain(a.lastActivityAt) : '──'
+      ? formatTimeSince(a.lastActivityAt) : '──'
     const tokens = formatTokens(totalTokenCount(a.tokenUsage))
 
     lines.push(
@@ -202,19 +233,3 @@ function getPaneIds(state: TeamState): string[] {
   return []
 }
 
-function formatElapsedPlain(ms: number): string {
-  const s = Math.floor(ms / 1000)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
-  if (h > 0) return `${h}h ${m}m ${sec}s`
-  if (m > 0) return `${m}m ${sec}s`
-  return `${sec}s`
-}
-
-function formatTimeSincePlain(ts: number): string {
-  const secs = Math.floor((Date.now() - ts) / 1000)
-  if (secs < 60) return `${secs}s`
-  const mins = Math.floor(secs / 60)
-  return `${mins}m${secs % 60}s`
-}

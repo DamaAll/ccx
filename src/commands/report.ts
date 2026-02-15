@@ -8,6 +8,7 @@
  */
 import chalk from 'chalk'
 import { writeFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { findSnapshot, listSessions } from '../core/snapshot-reader.js'
 import { readTeamConfig, listTeamNames } from '../core/team-reader.js'
 import { startWatch } from '../core/watcher.js'
@@ -52,7 +53,7 @@ export async function runReport(options: ReportCommandOptions): Promise<void> {
   if (options.save) {
     const saveName = typeof options.save === 'string' ? options.save : snapshot.teamName
     const mdContent = formatMarkdownReport(snapshot)
-    const mdPath = `${saveName}-report.md`
+    const mdPath = resolve(`${saveName}-report.md`)
     await writeFile(mdPath, mdContent, 'utf-8')
     console.log(chalk.dim(`Report saved to: ${mdPath}`))
   }

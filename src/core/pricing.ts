@@ -97,3 +97,30 @@ export function totalTokenCount(usage: TokenUsage): number {
     usage.cache_read_input_tokens
   )
 }
+
+/**
+ * 格式化持續時間（ms → 人類可讀）
+ * < 60s: "45s"
+ * < 1h:  "12m 30s"
+ * < 24h: "5h 30m"
+ * >= 24h: "3d 18h"
+ */
+export function formatDuration(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const days = Math.floor(totalSec / 86400)
+  const hours = Math.floor((totalSec % 86400) / 3600)
+  const mins = Math.floor((totalSec % 3600) / 60)
+  const secs = totalSec % 60
+
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${mins}m`
+  if (mins > 0) return `${mins}m ${secs}s`
+  return `${secs}s`
+}
+
+/**
+ * 格式化「距今多久」（timestamp → 人類可讀）
+ */
+export function formatTimeSince(timestamp: number): string {
+  return formatDuration(Date.now() - timestamp)
+}

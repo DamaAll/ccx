@@ -174,6 +174,6 @@ describe('formatTerminalReport', () => {
 
   it('shows duration', () => {
     const output = formatTerminalReport(snapshot)
-    expect(output).toContain('1h 0m 0s')
+    expect(output).toContain('1h 0m')
   })
 })

@@ -8,6 +8,8 @@ import {
   totalTokenCount,
   resolveModelName,
   getModelShortName,
+  formatDuration,
+  formatTimeSince,
 } from '../src/core/pricing.js'
 import type { TokenUsage } from '../src/core/types.js'
 
@@ -176,6 +178,37 @@ describe('pricing', () => {
 
     it('returns a new object each call', () => {
       expect(emptyUsage()).not.toBe(emptyUsage())
+    })
+  })
+
+  describe('formatDuration', () => {
+    it('formats seconds', () => {
+      expect(formatDuration(0)).toBe('0s')
+      expect(formatDuration(45_000)).toBe('45s')
+    })
+
+    it('formats minutes and seconds', () => {
+      expect(formatDuration(90_000)).toBe('1m 30s')
+      expect(formatDuration(600_000)).toBe('10m 0s')
+    })
+
+    it('formats hours and minutes (no seconds)', () => {
+      expect(formatDuration(3_600_000)).toBe('1h 0m')
+      expect(formatDuration(5_400_000)).toBe('1h 30m')
+      expect(formatDuration(82_800_000)).toBe('23h 0m')
+    })
+
+    it('formats days and hours (no minutes)', () => {
+      expect(formatDuration(86_400_000)).toBe('1d 0h')
+      expect(formatDuration(90_000_000)).toBe('1d 1h')
+      expect(formatDuration(325_020_000)).toBe('3d 18h')
+    })
+  })
+
+  describe('formatTimeSince', () => {
+    it('returns duration from timestamp to now', () => {
+      const fiveMinAgo = Date.now() - 300_000
+      expect(formatTimeSince(fiveMinAgo)).toBe('5m 0s')
     })
   })
 })
