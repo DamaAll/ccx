@@ -176,6 +176,14 @@ program
     console.log(`Deleted ${deleted} old session(s), kept ${toKeep.length} most recent.`)
   })
 
+// ─── help (alias) ───
+program
+  .command('help')
+  .description('Show help')
+  .action(() => {
+    program.help()
+  })
+
 // ─── No subcommand → show help ───
 program.action(() => {
   program.help()
