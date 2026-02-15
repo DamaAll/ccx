@@ -1,0 +1,39 @@
+{
+  "name": "ccx",
+  "version": "0.1.0",
+  "description": "Agent Teams control plane for Claude Code",
+  "type": "module",
+  "bin": {
+    "ccx": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "claude-code",
+    "agent-teams",
+    "monitoring",
+    "dashboard"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "chokidar": "^4.0.3",
+    "commander": "^13.1.0",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
