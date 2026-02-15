@@ -22,13 +22,13 @@ ccx fills that gap.
 ## Install
 
 ```bash
-npm install -g ccx
+npm install -g @damaall/ccx
 ```
 
 Or run directly:
 
 ```bash
-npx ccx watch
+npx @damaall/ccx watch
 ```
 
 ## Quick Start

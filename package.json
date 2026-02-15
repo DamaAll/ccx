@@ -1,5 +1,5 @@
 {
-  "name": "ccx",
+  "name": "@damaall/ccx",
   "version": "0.1.0",
   "description": "Agent Teams control plane for Claude Code — observability, cost tracking, and team topology reuse",
   "type": "module",
@@ -35,6 +35,9 @@
   },
   "author": "DamaAll",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
