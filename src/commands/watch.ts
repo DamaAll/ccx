@@ -1,19 +1,26 @@
 /**
- * watch command：純文字版 dashboard MVP
+ * watch command：ink Dashboard UI
  *
- * Day 2 會替換為 ink Dashboard UI
+ * --plain 回退到純文字模式（Day 1 的實作）
  */
+import React from 'react'
+import { render } from 'ink'
 import chalk from 'chalk'
 import { startWatch, type WatchHandle } from '../core/watcher.js'
 import { listTeamNames } from '../core/team-reader.js'
+import { Dashboard } from '../ui/Dashboard.js'
+import { sendOsNotification } from '../guard/soft-limit.js'
+import { killAllMembers } from '../guard/hard-limit.js'
 import { formatCost, formatTokens, totalTokenCount } from '../core/pricing.js'
-import type { TeamState, AgentState, TaskData, Alert } from '../core/types.js'
+import type { TeamState, StateEvent } from '../core/types.js'
 
 export interface WatchCommandOptions {
   readonly team?: string
   readonly budget?: number
   readonly stuckTimeout?: number
   readonly plain?: boolean
+  readonly kill?: boolean
+  readonly notify?: boolean
 }
 
 export async function runWatch(options: WatchCommandOptions): Promise<void> {
@@ -25,10 +32,13 @@ export async function runWatch(options: WatchCommandOptions): Promise<void> {
     process.exit(1)
   }
 
-  console.log(chalk.dim(`Starting watch for team: ${teamName}...`))
-
-  // 用 mutable ref 避免 closure capture 未賦值的 handle
-  const ref: { handle: WatchHandle | null } = { handle: null }
+  // --kill 啟動確認
+  if (options.kill && options.budget) {
+    console.log(chalk.yellow.bold(`⚠ Hard Limit enabled.`))
+    console.log(chalk.yellow(`  When cost exceeds $${options.budget}, ccx will send C-c to agent tmux panes.`))
+    console.log(chalk.yellow(`  This may cause unfinished work to be lost.`))
+    console.log()
+  }
 
   let handle: WatchHandle
   try {
@@ -36,42 +46,126 @@ export async function runWatch(options: WatchCommandOptions): Promise<void> {
       teamName,
       budget: options.budget,
       stuckTimeoutMs: options.stuckTimeout ? options.stuckTimeout * 1000 : undefined,
-      onStateChange: () => { if (ref.handle) render(ref.handle) },
     })
-    ref.handle = handle
   } catch (err) {
     console.error(chalk.red(err instanceof Error ? err.message : 'Failed to start watch'))
     process.exit(1)
   }
 
-  // SIGINT handling
-  process.on('SIGINT', async () => {
-    console.log(chalk.dim('\nSaving final snapshot...'))
+  // Guard: OS notification + hard limit
+  if (options.notify || options.kill) {
+    handle.aggregator.on('event', async (event: StateEvent) => {
+      if (event.type === 'cost_threshold') {
+        if (options.notify) {
+          await sendOsNotification(
+            'ccx budget alert',
+            `${teamName}: ${formatCost(event.current)} / ${formatCost(event.budget)}`
+          )
+        }
+
+        if (options.kill && event.current >= event.budget) {
+          const state = handle.aggregator.getState()
+          const paneIds = getPaneIds(state)
+          if (paneIds.length > 0) {
+            await killAllMembers(paneIds)
+          }
+        }
+      }
+    })
+  }
+
+  const onQuit = async () => {
     await handle.stop()
-    console.log(chalk.dim(`Saved to: ${handle.snapshotManager.sessionPath}`))
-    console.log(chalk.dim(`Run "ccx report ${handle.snapshotManager.name}" to view full report.`))
+  }
+
+  // SIGINT fallback (ink 通常自己處理，但 plain mode 需要)
+  process.on('SIGINT', async () => {
+    await handle.stop()
+    console.log(chalk.dim(`\nSaved to: ${handle.snapshotManager.sessionPath}`))
     process.exit(0)
   })
 
-  // Initial render
-  render(handle)
+  if (options.plain) {
+    // ─── Plain text mode ───
+    runPlainMode(handle)
+  } else {
+    // ─── ink mode ───
+    render(
+      React.createElement(Dashboard, {
+        aggregator: handle.aggregator,
+        budget: options.budget ?? null,
+        hardLimit: options.kill ?? false,
+        sessionPath: handle.snapshotManager.sessionPath,
+        onQuit,
+      })
+    )
+  }
+}
 
-  // 定期 re-render（純文字版用 interval，ink 版用 event-driven）
-  const renderInterval = setInterval(() => render(handle), 2000)
+// ─── Plain text mode (Day 1 fallback) ───
 
-  // TeamDelete event → graceful stop
-  handle.aggregator.on('event', async (event) => {
+function runPlainMode(handle: WatchHandle): void {
+  const renderPlain = () => {
+    const state = handle.aggregator.getState()
+    process.stdout.write('\x1B[2J\x1B[H')
+    process.stdout.write(formatPlainDashboard(state))
+  }
+
+  renderPlain()
+  setInterval(renderPlain, 2000)
+
+  handle.aggregator.on('event', async (event: StateEvent) => {
     if (event.type === 'team_deleted') {
-      clearInterval(renderInterval)
-      console.log(chalk.yellow('\nTeam has been deleted. Finalizing snapshot...'))
+      console.log(chalk.yellow('\nTeam deleted. Snapshot saved.'))
       await handle.stop()
-      console.log(chalk.dim(`Saved to: ${handle.snapshotManager.sessionPath}`))
       process.exit(0)
     }
   })
 }
 
-// ─── Auto-detect team ───
+function formatPlainDashboard(state: TeamState): string {
+  const lines: string[] = []
+  const elapsed = formatElapsedPlain(state.elapsedMs)
+
+  lines.push(`ccx watch: ${state.teamName} (${elapsed})    Cost: ${formatCost(state.totalCost)}`)
+  lines.push('─'.repeat(72))
+  lines.push(`${'AGENTS'.padEnd(30)}${'STATUS'.padEnd(12)}${'ACTIVE'.padEnd(10)}${'TOKENS'.padEnd(10)}COST`)
+
+  for (let i = 0; i < state.agents.length; i++) {
+    const a = state.agents[i]
+    const prefix = i === state.agents.length - 1 ? '└─' : '├─'
+    const name = `${a.name} (${a.model})`.slice(0, 26)
+    const active = a.lastActivityAt > 0
+      ? formatTimeSincePlain(a.lastActivityAt) : '──'
+    const tokens = formatTokens(totalTokenCount(a.tokenUsage))
+
+    lines.push(
+      `${prefix} ${name.padEnd(28)}${a.status.padEnd(12)}${active.padEnd(10)}${tokens.padEnd(10)}${formatCost(a.cost)}`
+    )
+  }
+
+  lines.push(`${''.padEnd(30)}${'TOTAL'.padEnd(12)}${''.padEnd(10)}${formatTokens(totalTokenCount(state.totalTokens)).padEnd(10)}${formatCost(state.totalCost)}`)
+  lines.push('')
+  lines.push('TASKS')
+
+  for (const t of state.tasks) {
+    const status = t.status === 'in_progress' ? '[working]' : t.status === 'completed' ? '[done]' : `[${t.status}]`
+    lines.push(`#${t.id.padEnd(5)} ${status.padEnd(12)} ${t.subject.slice(0, 30).padEnd(32)} ${t.owner || '──'}`)
+  }
+
+  if (state.alerts.length > 0) {
+    lines.push('')
+    lines.push('ALERTS')
+    for (const a of state.alerts.slice(-3)) {
+      lines.push(`⚠ ${a.message}`)
+    }
+  }
+
+  lines.push('')
+  return lines.join('\n')
+}
+
+// ─── Auto-detect ───
 
 async function autoDetectTeam(): Promise<string | null> {
   const teams = await listTeamNames()
@@ -86,181 +180,25 @@ async function autoDetectTeam(): Promise<string | null> {
   process.exit(1)
 }
 
-// ─── Render ───
-
-let lastRenderAt = 0
-const RENDER_THROTTLE_MS = 200
-
-function render(handle: WatchHandle): void {
-  const now = Date.now()
-  if (now - lastRenderAt < RENDER_THROTTLE_MS) return
-  lastRenderAt = now
-
-  const state = handle.aggregator.getState()
-  const output = formatDashboard(state)
-
-  // Clear screen + move cursor to top
-  process.stdout.write('\x1B[2J\x1B[H')
-  process.stdout.write(output)
+function getPaneIds(state: TeamState): string[] {
+  // 目前沒有直接拿到 paneId 的方式（config.json 的 tmuxPaneId 通常是空的）
+  // 這是 v1.5 hard limit 的限制
+  return []
 }
 
-function formatDashboard(state: TeamState): string {
-  const lines: string[] = []
-  const elapsed = formatElapsed(state.elapsedMs)
-
-  // ─── Header ───
-  const header = `ccx watch: ${state.teamName} (${elapsed})`
-  const costStr = `Cost: ${formatCost(state.totalCost)}`
-  const padding = Math.max(0, 72 - header.length - costStr.length)
-  lines.push(chalk.bold(header) + ' '.repeat(padding) + chalk.cyan(costStr))
-  lines.push(chalk.dim('─'.repeat(72)))
-
-  // ─── Agents ───
-  lines.push(formatAgentHeader())
-
-  if (state.agents.length === 0) {
-    lines.push(chalk.dim('  (no agents detected yet)'))
-  } else {
-    for (let i = 0; i < state.agents.length; i++) {
-      const agent = state.agents[i]
-      const isLast = i === state.agents.length - 1
-      const prefix = isLast ? '└─' : '├─'
-      lines.push(formatAgentRow(prefix, agent))
-    }
-  }
-
-  // ─── Total ───
-  const totalTokens = formatTokens(totalTokenCount(state.totalTokens))
-  lines.push(chalk.dim(' '.repeat(38) + '────────────────────────'))
-  lines.push(
-    ' '.repeat(38) +
-    padRight('TOTAL', 10) +
-    padRight(totalTokens, 10) +
-    formatCost(state.totalCost)
-  )
-
-  lines.push('')
-
-  // ─── Tasks ───
-  lines.push(chalk.bold('TASKS'))
-
-  if (state.tasks.length === 0) {
-    lines.push(chalk.dim('  (no tasks)'))
-  } else {
-    for (const task of state.tasks) {
-      lines.push(formatTaskRow(task))
-    }
-  }
-
-  lines.push('')
-
-  // ─── Alerts ───
-  const recentAlerts = state.alerts.slice(-3)
-  if (recentAlerts.length > 0) {
-    lines.push(chalk.bold(`ALERTS (showing ${recentAlerts.length} of ${state.alerts.length})`))
-    for (const alert of recentAlerts) {
-      lines.push(formatAlert(alert))
-    }
-    lines.push('')
-  }
-
-  return lines.join('\n')
+function formatElapsedPlain(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (h > 0) return `${h}h ${m}m ${sec}s`
+  if (m > 0) return `${m}m ${sec}s`
+  return `${sec}s`
 }
 
-// ─── Format helpers ───
-
-function formatAgentHeader(): string {
-  return chalk.dim(
-    padRight('AGENTS', 30) +
-    padRight('STATUS', 12) +
-    padRight('ACTIVE', 10) +
-    padRight('TOKENS', 10) +
-    'COST'
-  )
-}
-
-function formatAgentRow(prefix: string, agent: AgentState): string {
-  const name = truncate(`${agent.name} (${agent.model})`, 26)
-  const status = colorizeStatus(agent.status)
-  const active = agent.lastActivityAt > 0
-    ? formatTimeSince(agent.lastActivityAt)
-    : chalk.dim('──')
-  const tokens = formatTokens(totalTokenCount(agent.tokenUsage))
-  const cost = formatCost(agent.cost)
-
-  return (
-    `${prefix} ${padRight(name, 28)}` +
-    padRight(status, 20) + // extra width for ANSI codes
-    padRight(active, 10) +
-    padRight(tokens, 10) +
-    cost
-  )
-}
-
-function formatTaskRow(task: TaskData): string {
-  const id = `#${task.id}`
-  const status = colorizeTaskStatus(task.status)
-  const subject = truncate(task.subject, 30)
-  const owner = task.owner || chalk.dim('──')
-
-  return `${padRight(id, 5)} ${padRight(status, 18)} ${padRight(subject, 32)} ${owner}`
-}
-
-function formatAlert(alert: Alert): string {
-  const icon = alert.level === 'critical' ? chalk.red('!!') : chalk.yellow('!!')
-  const msg = alert.level === 'critical' ? chalk.red(alert.message) : chalk.yellow(alert.message)
-  return `${icon} ${msg}`
-}
-
-function colorizeStatus(status: string): string {
-  switch (status) {
-    case 'working': return chalk.green(status)
-    case 'idle': return chalk.dim(status)
-    case 'thinking': return chalk.yellow(status)
-    case 'stuck': return chalk.red('stuck?')
-    case 'done': return chalk.blue(status)
-    case 'shutdown': return chalk.dim('shutdown')
-    default: return chalk.dim(status)
-  }
-}
-
-function colorizeTaskStatus(status: string): string {
-  switch (status) {
-    case 'in_progress': return chalk.green('[working]')
-    case 'completed': return chalk.blue('[done]')
-    case 'pending': return chalk.dim('[pending]')
-    default: return chalk.dim(`[${status}]`)
-  }
-}
-
-function formatElapsed(ms: number): string {
-  const totalSec = Math.floor(ms / 1000)
-  const hours = Math.floor(totalSec / 3600)
-  const mins = Math.floor((totalSec % 3600) / 60)
-  const secs = totalSec % 60
-
-  if (hours > 0) return `${hours}h ${mins}m ${secs}s`
-  if (mins > 0) return `${mins}m ${secs}s`
-  return `${secs}s`
-}
-
-function formatTimeSince(timestamp: number): string {
-  const ms = Date.now() - timestamp
-  const secs = Math.floor(ms / 1000)
+function formatTimeSincePlain(ts: number): string {
+  const secs = Math.floor((Date.now() - ts) / 1000)
   if (secs < 60) return `${secs}s`
   const mins = Math.floor(secs / 60)
-  if (mins < 60) return `${mins}m${secs % 60}s`
-  return `${Math.floor(mins / 60)}h${mins % 60}m`
-}
-
-function padRight(str: string, width: number): string {
-  // 移除 ANSI codes 計算真實寬度
-  const stripped = str.replace(/\x1B\[[0-9;]*m/g, '')
-  const pad = Math.max(0, width - stripped.length)
-  return str + ' '.repeat(pad)
-}
-
-function truncate(str: string, maxLen: number): string {
-  if (str.length <= maxLen) return str
-  return str.slice(0, maxLen - 3) + '...'
+  return `${mins}m${secs % 60}s`
 }

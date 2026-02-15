@@ -19,17 +19,21 @@ program
   .description('Live dashboard for an active Agent Team')
   .option('--budget <usd>', 'Cost alert threshold in USD', parseFloat)
   .option('--stuck-timeout <seconds>', 'Seconds before marking agent as stuck (default: 180)', parseInt)
+  .option('--kill', 'Hard limit: send C-c to agents when budget exceeded')
+  .option('--notify', 'Send OS notification on budget alerts')
   .option('--plain', 'Accessible text-only mode (no colors)')
   .action(async (team: string | undefined, opts) => {
-    if (opts.plain) {
-      // chalk 支援 NO_COLOR 環境變數
+    if (opts.plain || process.env.NO_COLOR || process.env.TERM === 'dumb') {
       process.env.NO_COLOR = '1'
+      opts.plain = true
     }
     await runWatch({
       team,
       budget: opts.budget,
       stuckTimeout: opts.stuckTimeout,
       plain: opts.plain,
+      kill: opts.kill,
+      notify: opts.notify,
     })
   })
 

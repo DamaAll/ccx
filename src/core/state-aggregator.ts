@@ -84,7 +84,8 @@ export class StateAggregator extends EventEmitter {
   // ─── Output：取得當前完整狀態 ───
 
   getState(): TeamState {
-    const agents = [...this.cursors.values()].map(c => this.buildAgentState(c))
+    const rawAgents = [...this.cursors.values()].map(c => this.buildAgentState(c))
+    const agents = deduplicateAgents(rawAgents)
     const totalTokens = this.computeTotalTokens()
     const totalCost = this.computeTotalCost()
 
@@ -96,7 +97,7 @@ export class StateAggregator extends EventEmitter {
       tasks: this.tasks,
       totalCost,
       totalTokens,
-      alerts: this.alerts.slice(-10), // 最多保留 10 條
+      alerts: this.alerts.slice(-10),
       isActive: this.teamConfig !== null,
     }
   }
@@ -209,4 +210,51 @@ export class StateAggregator extends EventEmitter {
   private addAlert(level: Alert['level'], message: string): void {
     this.alerts.push({ level, message, timestamp: Date.now() })
   }
+}
+
+// ─── Agent deduplication ───
+// 多輪 session 可能產生多個同名 agent（例如 team-lead 出現 6 次）
+// 策略：合併同名 agents 的 token usage 和 cost
+
+function deduplicateAgents(agents: AgentState[]): AgentState[] {
+  const byName = new Map<string, AgentState[]>()
+
+  for (const agent of agents) {
+    const existing = byName.get(agent.name) ?? []
+    existing.push(agent)
+    byName.set(agent.name, existing)
+  }
+
+  const result: AgentState[] = []
+
+  for (const [, group] of byName) {
+    if (group.length === 1) {
+      result.push(group[0])
+      continue
+    }
+
+    // 合併：加總 tokens/cost，取最新的 status 和 activity
+    let mergedUsage = emptyUsage()
+    let mergedCost = 0
+    let latestActivity = 0
+    let latestAgent = group[0]
+
+    for (const agent of group) {
+      mergedUsage = addUsage(mergedUsage, agent.tokenUsage)
+      mergedCost += agent.cost
+      if (agent.lastActivityAt > latestActivity) {
+        latestActivity = agent.lastActivityAt
+        latestAgent = agent
+      }
+    }
+
+    result.push({
+      ...latestAgent,
+      tokenUsage: mergedUsage,
+      cost: mergedCost,
+      lastActivityAt: latestActivity,
+    })
+  }
+
+  return result
 }
