@@ -49,6 +49,50 @@ describe('identity-resolver', () => {
       const resolved = tryResolveFromRawLines(cursor, rawLines)
       expect(resolved.resolvedName).toBe('my-cool_agent-v2')
     })
+
+    it('matches direct-quote format: teammate_id="name"', () => {
+      const cursor = createCursor('/tmp/agent-abc.jsonl', 'abc')
+      const rawLines = [
+        '<teammate-message teammate_id="direct-worker" color="blue">',
+      ]
+
+      const resolved = tryResolveFromRawLines(cursor, rawLines)
+      expect(resolved.state).toBe('RESOLVED')
+      expect(resolved.resolvedName).toBe('direct-worker')
+    })
+
+    it('matches JSON key-value format: "teammate_id": "name"', () => {
+      const cursor = createCursor('/tmp/agent-abc.jsonl', 'abc')
+      const rawLines = [
+        '{"teammate_id": "json-worker", "color": "blue"}',
+      ]
+
+      const resolved = tryResolveFromRawLines(cursor, rawLines)
+      expect(resolved.state).toBe('RESOLVED')
+      expect(resolved.resolvedName).toBe('json-worker')
+    })
+
+    it('matches unquoted format: teammate_id=name>', () => {
+      const cursor = createCursor('/tmp/agent-abc.jsonl', 'abc')
+      const rawLines = [
+        '<teammate-message teammate_id=unquoted-worker>',
+      ]
+
+      const resolved = tryResolveFromRawLines(cursor, rawLines)
+      expect(resolved.state).toBe('RESOLVED')
+      expect(resolved.resolvedName).toBe('unquoted-worker')
+    })
+
+    it('matches unquoted format: teammate_id=name followed by space', () => {
+      const cursor = createCursor('/tmp/agent-abc.jsonl', 'abc')
+      const rawLines = [
+        'some text teammate_id=spaced-worker color=blue',
+      ]
+
+      const resolved = tryResolveFromRawLines(cursor, rawLines)
+      expect(resolved.state).toBe('RESOLVED')
+      expect(resolved.resolvedName).toBe('spaced-worker')
+    })
   })
 
   describe('batchResolve', () => {

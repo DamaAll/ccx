@@ -12,8 +12,15 @@
 import type { FileCursor } from './types.js'
 import { resolveCursorIdentity } from './cursor-reader.js'
 
-// 匹配 teammate_id=\"name\" 或 teammate_id="name"
-const TEAMMATE_ID_RE = /teammate_id\\?"?=?\\?"([a-zA-Z0-9_-]+)\\?"/
+// 多重 pattern 匹配 — 按優先順序嘗試，容忍格式變化
+const TEAMMATE_ID_PATTERNS: readonly RegExp[] = [
+  // Pattern 1: 帶 = 的 JSON-escaped 或直接引號 — teammate_id=\"name\" 或 teammate_id="name"
+  /teammate_id=\\?"([a-zA-Z0-9_-]+)\\?"/,
+  // Pattern 2: JSON key-value — "teammate_id": "name"
+  /"teammate_id"\s*:\s*"([a-zA-Z0-9_-]+)"/,
+  // Pattern 3: 無引號 — teammate_id=name（後接空白或 >）
+  /teammate_id=([a-zA-Z0-9_-]+)[\s>]/,
+]
 
 /**
  * 嘗試從 raw JSONL lines 中解析 agent name
@@ -42,9 +49,11 @@ export function tryResolveFromRawLines(
  * {...,"content":"<teammate-message teammate_id=\"syntax-fixer\" color=\"blue\">\n..."}
  */
 function extractTeammateIdFromRaw(line: string): string | null {
-  const match = line.match(TEAMMATE_ID_RE)
-  if (match && match[1]) {
-    return match[1]
+  for (const pattern of TEAMMATE_ID_PATTERNS) {
+    const match = line.match(pattern)
+    if (match && match[1]) {
+      return match[1]
+    }
   }
   return null
 }

@@ -91,23 +91,42 @@ type KnownMessageType =
   | 'task_assignment'
   | 'task_completed'
 
+const VALID_MESSAGE_TYPES = new Set<KnownMessageType>([
+  'idle_notification',
+  'shutdown_request',
+  'shutdown_approved',
+  'task_assignment',
+  'task_completed',
+])
+
+// 文字 fallback 匹配規則 — 順序重要：更具體的 pattern 在前
+const TEXT_FALLBACK_PATTERNS: readonly { pattern: RegExp; type: KnownMessageType }[] = [
+  { pattern: /shutdown[_\s]?approved/i, type: 'shutdown_approved' },
+  { pattern: /shutdown[_\s]?request/i, type: 'shutdown_request' },
+  { pattern: /\bshutdown\b/i, type: 'shutdown_request' },
+  { pattern: /task[_\s]?completed|完成/i, type: 'task_completed' },
+  { pattern: /task[_\s]?assignment/i, type: 'task_assignment' },
+  { pattern: /\bidle\b/i, type: 'idle_notification' },
+]
+
 function parseMessageType(text: string): KnownMessageType | null {
-  // inbox messages 裡的 text 可能包含 JSON，也可能是純文字
-  // 嘗試解析 JSON 中的 type 欄位
+  // 優先：嘗試解析 JSON 中的 type 欄位
   try {
     const parsed = JSON.parse(text)
     if (typeof parsed === 'object' && parsed !== null && 'type' in parsed) {
-      return parsed.type as KnownMessageType
+      const candidate = parsed.type as string
+      if (VALID_MESSAGE_TYPES.has(candidate as KnownMessageType)) {
+        return candidate as KnownMessageType
+      }
     }
   } catch {
-    // 純文字 — 用關鍵字比對
+    // 非 JSON — 使用文字 fallback
   }
 
-  if (text.includes('idle')) return 'idle_notification'
-  if (text.includes('shutdown_approved') || text.includes('shutdown approved')) return 'shutdown_approved'
-  if (text.includes('shutdown')) return 'shutdown_request'
-  if (text.includes('task_completed') || text.includes('完成')) return 'task_completed'
-  if (text.includes('task_assignment')) return 'task_assignment'
+  // Fallback：case-insensitive regex 匹配，更具體的 pattern 優先
+  for (const { pattern, type } of TEXT_FALLBACK_PATTERNS) {
+    if (pattern.test(text)) return type
+  }
 
   return null
 }
